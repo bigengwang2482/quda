@@ -70,16 +70,20 @@ int main(int argc, char **argv)
   // initialize QMP/MPI, QUDA comms grid and RNG (host_utils.cpp)
   initComms(argc, argv, gridsize_from_cmdline);
 
-  QudaGaugeParam gauge_param = newQudaGaugeParam();
+
+  // Setting gauge params
+  QudaGaugeParam gauge_param = newQudaGaugeParam(); // init
   if (prec_sloppy == QUDA_INVALID_PRECISION) prec_sloppy = prec;
   if (link_recon_sloppy == QUDA_RECONSTRUCT_INVALID) link_recon_sloppy = link_recon;
 
-  setWilsonGaugeParam(gauge_param);
+  setWilsonGaugeParam(gauge_param); // Set up the gauge_param using WilsonGaugeParam
   gauge_param.t_boundary = QUDA_PERIODIC_T;
-  setDims(gauge_param.X);
+  setDims(gauge_param.X); // use gauge_param.X to set up demensions
 
   // All user inputs are now defined
   display_test_info();
+
+  // Create gauge field memory on host
 
   void *gauge[4], *new_gauge[4];
 
@@ -101,8 +105,8 @@ int main(int argc, char **argv)
   saveGaugeQuda(new_gauge, &gauge_param);
 
   // Prepare various perf info
-  long long flops_plaquette = 6ll * 597 * V;
-  long long flops_ploop = 198ll * V + 6 * V / gauge_param.X[3];
+  long long flops_plaquette = 6ll * 597 * V; // numbers of flops for a plaquette operation
+  long long flops_ploop = 198ll * V + 6 * V / gauge_param.X[3]; // numbers of flops for a ploop operation
 
   // Prepare a gauge observable struct
   QudaGaugeObservableParam param = newQudaGaugeObservableParam();
@@ -112,6 +116,8 @@ int main(int argc, char **argv)
 
   // We call gaugeObservablesQuda multiple times to time each bit individually
 
+  // BLOCK 1 BEGIN
+
   // Compute the plaquette
   param.compute_plaquette = QUDA_BOOLEAN_TRUE;
 
@@ -119,14 +125,16 @@ int main(int argc, char **argv)
   gaugeObservablesQuda(&param);
 
   host_timer.start();
-  for (int i = 0; i < niter; i++) gaugeObservablesQuda(&param);
+  for (int i = 0; i < niter; i++) gaugeObservablesQuda(&param); // repeat the test for niter times.
   host_timer.stop();
-  double secs_plaquette = host_timer.last() / niter;
-  double perf_plaquette = flops_plaquette / (secs_plaquette * 1024 * 1024 * 1024);
+  double secs_plaquette = host_timer.last() / niter; // time per iter
+  double perf_plaquette = flops_plaquette / (secs_plaquette * 1024 * 1024 * 1024); // show perf in GFLOPS
   printfQuda(
     "Computed plaquette gauge precise is %.16e (spatial = %.16e, temporal = %.16e), done in %g seconds, %g GFLOPS\n",
     param.plaquette[0], param.plaquette[1], param.plaquette[2], secs_plaquette, perf_plaquette);
-  param.compute_plaquette = QUDA_BOOLEAN_FALSE;
+  param.compute_plaquette = QUDA_BOOLEAN_FALSE; // reset to false
+  // BLOCK 1 END
+  // BLOCK 2 BEGIN
 
   // Compute the temporal Polyakov loop
   param.compute_polyakov_loop = QUDA_BOOLEAN_TRUE;
@@ -142,13 +150,15 @@ int main(int argc, char **argv)
   printfQuda("Computed Polyakov loop gauge precise is %.16e +/- I %.16e , done in %g seconds, %g GFLOPS\n",
              param.ploop[0], param.ploop[1], secs_ploop, perf_ploop);
   param.compute_polyakov_loop = QUDA_BOOLEAN_FALSE;
+  // BLOCK 2 END
 
+  // BLOCK 3 BEGIN
   // Topological charge and gauge energy
   double q_charge_check = 0.0;
   // Size of floating point data
   size_t data_size = prec == QUDA_DOUBLE_PRECISION ? sizeof(double) : sizeof(float);
   size_t array_size = V * data_size;
-  void *qDensity = pinned_malloc(array_size);
+  void *qDensity = pinned_malloc(array_size); // TopoQ density is a real double/float field
 
   // start the timer
   host_timer.start();
@@ -173,12 +183,12 @@ int main(int argc, char **argv)
 
   // release memory
   host_free(qDensity);
-
   // Q charge Reduction and normalisation
   quda::comm_allreduce_sum(q_charge_check);
 
   printfQuda("GPU value %e and host density sum %e. Q charge deviation: %e\n", param.qcharge, q_charge_check,
              param.qcharge - q_charge_check);
+  // BLOCK 3 END
 
   // The user may specify which measurements they wish to perform/omit
   // using the QudaGaugeObservableParam struct, and whether or not to
@@ -186,6 +196,8 @@ int main(int argc, char **argv)
   // users perform suN projection.
   // A unique observable param struct is constructed for each measurement.
 
+
+  // BLOCK 4 BEGIN
   // Gauge Smearing Routines
   //---------------------------------------------------------------------------
   // Stout smearing should be equivalent to APE smearing
@@ -246,6 +258,8 @@ int main(int argc, char **argv)
   printfQuda("Total time for gauge smearing = %g secs\n", host_timer.last());
 
   if (verify_results) check_gauge(gauge, new_gauge, 1e-3, gauge_param.cpu_prec);
+
+  // BLOCK 4 END
 
   for (int dir = 0; dir < 4; dir++) {
     host_free(gauge[dir]);
